@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Border Editor</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f9f9f9;
+    }
+    header {
+      background: #2c3e50;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+    }
+    main {
+      padding: 1rem;
+      max-width: 1000px;
+      margin: auto;
+      background: white;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    input[type="file"] {
+      margin-bottom: 1rem;
+    }
+    button {
+      margin: 0.5rem;
+      padding: 0.6rem 1.2rem;
+      border: none;
+      background: #3498db;
+      color: white;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    .canvas-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+    }
+    canvas {
+      border: 1px solid #ccc;
+      max-width: 100%;
+    }
+    .controls {
+      display: none;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin: 1rem 0;
+      align-items: center;
+    }
+    .controls label {
+      font-size: 14px;
+    }
+    .controls input, .controls select {
+      padding: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PDF Border Editor</h1>
+    <p>Add or Remove Borders from PDF Pages with Preview</p>
+  </header>
+
+  <main>
+    <input type="file" id="uploadPDF" accept="application/pdf" />
+
+    <div class="controls" id="borderControls">
+      <label>Color: <input type="color" id="borderColor" value="#000000" /></label>
+      <label>Margin: <input type="range" id="borderMargin" min="0" max="50" value="10" /></label>
+      <label>Thickness: <input type="range" id="borderThickness" min="1" max="10" value="2" /></label>
+      <label>Style:
+        <select id="borderStyle">
+          <option value="solid">Solid</option>
+          <option value="dashed">Dashed</option>
+          <option value="dotted">Dotted</option>
+        </select>
+      </label>
+    </div>
+
+    <div>
+      <button onclick="applyBorderAndRender()">Add Border</button>
+      <button onclick="removeBorder()">Remove Border</button>
+      <button onclick="downloadPDF()">Download PDF</button>
+    </div>
+
+    <div class="canvas-container" id="pdfPreview"></div>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+  <script>
+    let originalBytes = null;
+    let pdfDoc = null;
+    let modifiedDoc = null;
+
+    const uploadInput = document.getElementById('uploadPDF');
+    const previewContainer = document.getElementById('pdfPreview');
+    const controls = document.getElementById('borderControls');
+
+    const colorInput = document.getElementById('borderColor');
+    const marginInput = document.getElementById('borderMargin');
+    const thicknessInput = document.getElementById('borderThickness');
+    const styleInput = document.getElementById('borderStyle');
+
+    uploadInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file || file.type !== 'application/pdf') return;
+
+      originalBytes = await file.arrayBuffer();
+      pdfDoc = await PDFLib.PDFDocument.load(originalBytes);
+      modifiedDoc = await PDFLib.PDFDocument.load(originalBytes);
+
+      controls.style.display = 'flex';
+      await applyBorderAndRender(); // Initial auto apply
+    });
+
+    async function applyBorderAndRender() {
+      const color = colorInput.value;
+      const margin = parseInt(marginInput.value);
+      const thickness = parseInt(thicknessInput.value);
+      const style = styleInput.value;
+
+      modifiedDoc = await PDFLib.PDFDocument.load(originalBytes);
+      const pages = modifiedDoc.getPages();
+      const [r, g, b] = hexToRgb(color);
+
+      for (const page of pages) {
+        const { width, height } = page.getSize();
+        const dashArray = style === 'dashed' ? [10] : style === 'dotted' ? [2] : undefined;
+
+        page.drawRectangle({
+          x: margin,
+          y: margin,
+          width: width - margin * 2,
+          height: height - margin * 2,
+          borderColor: PDFLib.rgb(r / 255, g / 255, b / 255),
+          borderWidth: thickness,
+          borderDashArray: dashArray,
+        });
+      }
+
+      const newBytes = await modifiedDoc.save();
+      renderPDFPreview(newBytes);
+    }
+
+    async function removeBorder() {
+      modifiedDoc = await PDFLib.PDFDocument.load(originalBytes);
+      renderPDFPreview(originalBytes);
+    }
+
+    async function renderPDFPreview(arrayBuffer) {
+      previewContainer.innerHTML = '';
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1 });
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        await page.render({ canvasContext: context, viewport: viewport }).promise;
+        previewContainer.appendChild(canvas);
+      }
+    }
+
+    async function downloadPDF() {
+      const pdfBytes = await modifiedDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'edited.pdf';
+      link.click();
+    }
+
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.replace('#', ''), 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return [r, g, b];
+    }
+
+    [colorInput, marginInput, thicknessInput, styleInput].forEach(input => {
+      input.addEventListener('input', () => {
+        applyBorderAndRender();
+      });
+    });
+  </script>
+  <section style="padding: 30px; font-family: sans-serif; max-width: 800px; margin: auto;">
+  <h1 style="font-size: 28px; margin-bottom: 20px;">How to Add or Remove Border from PDF Online</h1>
+  
+  <h2 style="font-size: 22px; margin-bottom: 10px;">Why Edit Borders in a PDF?</h2>
+  <p style="font-size: 16px; line-height: 1.6;">
+    Borders in a PDF help in highlighting important content, organizing layout, or giving a professional look to your documents. 
+    Sometimes, scanned documents or printed files come with unnecessary borders that need removal. Our tool makes it easy to 
+    customize or clean up PDFs by adding or removing borders without any software installation.
+  </p>
+
+  <h2 style="font-size: 22px; margin-top: 30px; margin-bottom: 10px;">Steps to Add or Remove PDF Borders</h2>
+  <p style="font-size: 16px; line-height: 1.6;">
+    1. Click on the “Upload PDF” button to select your file.<br>
+    2. Once uploaded, preview all pages of the PDF.<br>
+    3. Use the border tools to adjust margin, thickness, style, and color.<br>
+    4. Click “Add Border” or “Remove Border” to apply changes.<br>
+    5. Download the updated PDF file instantly.
+  </p>
+
+  <h2 style="font-size: 22px; margin-top: 30px; margin-bottom: 10px;">100% Free & Works on All Devices</h2>
+  <p style="font-size: 16px; line-height: 1.6;">
+    This online PDF border editor works smoothly on mobile, tablet, and desktop browsers. It’s fast, free, and secure. 
+    No login or signup required. Just upload your file, make changes, and download in seconds.
+  </p>
+</section>
+</body>
+</html>
